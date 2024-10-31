@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+import os
+import pty
+import re
+import select
+import sys
+import tty
+import signal
+import termios
+import struct
+import fcntl
+
+# Regex to match hex color codes
+HEX_PATTERN = re.compile(r"#[0-9A-Fa-f]{6}")
+
+READ_LENGTH = 1024
+
+
+def hex_to_rgb(hex_color):
+    """Convert a hex color (#RRGGBB) to an RGB tuple."""
+    local_hex_color = hex_color.lstrip("#")
+    return tuple(int(local_hex_color[i : i + 2], 16) for i in (0, 2, 4))
+
+
+def colorize_text(hex_color):
+    """Wrap text with ANSI escape codes to color it."""
+    r, g, b = hex_to_rgb(hex_color)
+    return f"\033[7;38:2::{r}:{g}:{b}m{hex_color}\033[0m"
+
+
+def replace_hex_colors(data):
+    """Replace hex color codes in the given data with colorized versions."""
+    return HEX_PATTERN.sub(lambda match: colorize_text(match.group()), data)
+
+
+def get_terminal_size(fd):
+    """Get the current size of the terminal (rows, columns)."""
+    # print(fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b'\000' * 8))
+    return struct.unpack("ii", fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\000" * 8))
+
+
+def set_terminal_size(fd, size):
+    """Set the size of the PTY."""
+    rows, cols = size
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("ii", rows, cols))
+
+
+def resize_handler(signum, frame):
+    """Signal handler for window resize events."""
+    current_size = get_terminal_size(sys.stdout.fileno())
+    set_terminal_size(pty_fd, current_size)
+
+
+def main():
+    """Create a PTY, run Zsh inside, and modify its output in real-time."""
+    global pty_fd
+    pid, pty_fd = pty.fork()  # Create a new PTY
+
+    if pid == 0:
+        # Child process: Replace with the shell (e.g., Zsh)
+        os.execvp("zsh", ["zsh"])
+    else:
+        signal.signal(signal.SIGWINCH, resize_handler)
+        # Parent process: Forward input/output between user and shell
+
+        current_size = get_terminal_size(sys.stdout.fileno())
+        set_terminal_size(pty_fd, current_size)
+        buffer = ""
+
+        while True:
+            try:
+                # Use select to handle non-blocking reads from the PTY
+                r, _, _ = select.select([pty_fd, sys.stdin], [], [])
+
+                if pty_fd in r:
+                    # Read from PTY (output from Zsh)
+                    data = os.read(pty_fd, READ_LENGTH).decode(errors="ignore")
+                    # Replace hex codes with colorized versions
+                    buffer += data  # Accumulate output in the buffer
+                    modified_data = replace_hex_colors(buffer)
+                    # Write modified data to the terminal
+                    os.write(sys.stdout.fileno(), modified_data.encode())
+                    buffer = ""
+
+                if sys.stdin in r:
+                    # Forward user input to Zsh
+                    user_input = os.read(sys.stdin.fileno(), READ_LENGTH)
+                    os.write(pty_fd, user_input)
+
+            except OSError:
+                # Exit gracefully when the shell process ends
+                sys.exit(0)
+
+
+if __name__ == "__main__":
+    # Ensure the terminal behaves correctly with raw input mode
+    old_tty = termios.tcgetattr(sys.stdin)
+    tty.setraw(sys.stdin.fileno())
+    try:
+        main()
+    finally:
+        # Restore the terminal to normal state on exit
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_tty)
+        # tty.setcbreak(sys.stdin.fileno())
