@@ -11,7 +11,7 @@ import struct
 import fcntl
 
 # Regex to match hex color codes
-HEX_PATTERN = re.compile(r"#[0-9A-Fa-f]{6}")
+HEX_PATTERN = re.compile(r"#?[0-9A-Fa-f]{6}")
 
 READ_LENGTH = 1024
 
