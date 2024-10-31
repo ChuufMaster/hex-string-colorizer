@@ -15,6 +15,7 @@ HEX_PATTERN = re.compile(r"#[0-9A-Fa-f]{6}")
 
 READ_LENGTH = 1024
 
+os.environ["COLORIZED"] = "Hello colors #19cb00"
 
 def hex_to_rgb(hex_color):
     """Convert a hex color (#RRGGBB) to an RGB tuple."""
@@ -101,4 +102,6 @@ if __name__ == "__main__":
     finally:
         # Restore the terminal to normal state on exit
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_tty)
+
+        os.environ["COLORIZED"] = ""
         # tty.setcbreak(sys.stdin.fileno())
